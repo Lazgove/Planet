@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tiny Planet: Earthquake</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #050505; }
+        #overlay {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            color: white; font-family: sans-serif; text-align: center;
+            padding: 20px; background: rgba(0,0,0,0.7); border-radius: 10px; cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <div id="overlay"><h1>CLICK TO INITIALIZE WORLD</h1><p>Requires Mic & Camera</p></div>
+
+    <script type="importmap">
+        { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js", "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/" } }
+    </script>
+    <script type="module" src="main.js"></script>
+</body>
+</html>
