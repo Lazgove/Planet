@@ -1,0 +1,28 @@
+{
+  "name": "planet",
+  "version": "1.0.0",
+  "description": "",
+  "main": "main.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Lazgove/Planet.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/Lazgove/Planet/issues"
+  },
+  "homepage": "https://github.com/Lazgove/Planet#readme",
+  "dependencies": {
+    "lil-gui": "^0.21.0",
+    "simplex-noise": "^4.0.3",
+    "three": "^0.182.0"
+  },
+  "devDependencies": {
+    "vite": "^7.3.1"
+  }
+}

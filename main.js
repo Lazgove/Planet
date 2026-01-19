@@ -1,350 +1,350 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
-import { GUI } from 'three/addons/libs/lil-gui.module.min.js'; // Add this line
+import { GUI } from 'lil-gui';
 import { createNoise3D } from 'https://cdn.skypack.dev/simplex-noise';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
-// Initialize the noise function
-const noise3D = createNoise3D();
+// main.js
+import { cloner, loadAssets, bakeTerrain, createStars, createCircleTexture, reduceMeshComplexity } from './utilities.js';
+const clock = new THREE.Clock();
 
-// --- CONFIGURATION ---
-let scene, camera, renderer, controls, planet;
-const PLANET_RADIUS = 10;
-
-// Inside your main class or init
-const clones = [];
-const vertexIndices = []; // Stores which vertex each building belongs to
-let originalPositions;
-
-// Global settings object
-const settings = {
-    audioVolume: 0.5,
-    planetColor: 0x228b22,
-    wireframe: false,
-    speed: 1.0,
-    count: 50
+const params = {
+    heat: 0.5,
+    season: 'Summer',
+    waterLevel: 1.0,
+    windLevel: 0.2,
+    earthquakeLevel: 0.0,
+    // Helper to trigger a new bake
+    regenerate: () => { 
+        bakeTerrain(planet, params); 
+        // Re-save original positions after bake if you are animating
+        planet.geometry.userData.originalPositions = new Float32Array(planet.geometry.attributes.position.array);
+    }
 };
 
-const raycaster = new THREE.Raycaster();
-const mouse = new THREE.Vector2(0, 0); // Center of the screen
-let impactPoint = new THREE.Vector3();
+const materials = {
+    Ocean: createSphericalGradientMaterial(0x0044aa, 0x0099ff, 4.5, 5.0, {
+        transmission: 0.0,
+        ior: 1.33,
+        roughness: 0.1
+    }),
+    Land: createSphericalGradientMaterial(0xecca5b, 0x91a02e, 12, 12.5, {
+        roughness: 0.8
+    }),
+    Mountains: createSphericalGradientMaterial(0x6e3f13, 0xffffff, 12, 16, {
+        roughness: 0.9
+    }),
+    Sand: createSphericalGradientMaterial(0xd2b48c, 0xfff4e0, 4.9, 5.1, {
+        roughness: 1.0
+    })
+};
 
-const planetVertexShader = `
-    attribute float aBakedHeight; // Our new locked data
-    varying float vLockedHeight;
-
-    void main() {
-        vLockedHeight = aBakedHeight; // Pass it to the fragment shader
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-    }
-`;
-
-const planetFragmentShader = `
-    varying float vLockedHeight;
-
-    void main() {
-        // 1. Base Colors (keep them punchy for low-poly)
-        vec3 ocean = vec3(0.1, 0.3, 0.6);
-        vec3 sand  = vec3(0.9, 0.8, 0.5);
-        vec3 grass = vec3(0.3, 0.6, 0.2);
-        vec3 rock  = vec3(0.5, 0.5, 0.5);
-        vec3 snow  = vec3(1.0, 1.0, 1.0);
-
-        // 2. HARD CUTS (No more smoothstep blending)
-        // We use a simple if/else or step() to ensure no gradients
-        vec3 finalColor;
-        if (vLockedHeight < 10.2) {
-            finalColor = ocean;
-        } else if (vLockedHeight < 10.5) {
-            finalColor = sand;
-        } else if (vLockedHeight < 11.2) {
-            finalColor = grass;
-        } else if (vLockedHeight < 12.0) {
-            finalColor = rock;
-        } else {
-            finalColor = snow;
-        }
-
-        gl_FragColor = vec4(finalColor, 1.0);
-    }
-`;
-
-
-function init() {
-
-    // 1. Scene & Camera
-    scene = new THREE.Scene();
-    camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-    camera.position.set(0, 10, 15);
-
-    // 2. Renderer
-    renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.0; // Adjust this number to brighten/darken
-    document.body.appendChild(renderer.domElement);
-
-    // 3. Orbit Controls (Zoom & Rotate)
-    controls = new OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
-
-    // // 4. HDRI
-    // const loader = new RGBELoader();
-    // loader.setPath('./assets/'); // Path relative to your main.js
-    // loader.load('HDRI_space.hdr', function (texture) {
-        
-    //     // Mapping the texture for 360 environment
-    //     texture.mapping = THREE.EquirectangularReflectionMapping;
-
-    //     // Set the scene background
-    //     scene.background = texture;
-        
-    //     // Set the scene environment (this makes buildings reflect the sky)
-    //     scene.environment = texture;
-
-    //     console.log("HDRI Loaded Successfully");
-    // });
-
-    // 5. Lights
-    const sun = new THREE.DirectionalLight(0xffffff, 2.5);
-    const ambient = new THREE.AmbientLight(0x202040, 0.8);
-    sun.position.set(10, 10, 10);
-    scene.add(sun);
-    scene.add(ambient);
-
-    // 6. The Tiny Planet
-    const planetGeo = new THREE.SphereGeometry(PLANET_RADIUS, 32, 24);
-    const lowPolyGeo = planetGeo.toNonIndexed(); 
-    planet = new THREE.Mesh(planetGeo);
-    scene.add(planet);
-    bakeTerrain();
-    lockColors();
-    
-    const planetMat = new THREE.ShaderMaterial({
-    vertexShader: planetVertexShader,
-    fragmentShader: planetFragmentShader
+function createSphericalGradientMaterial(innerColor, outerColor, innerRadius, outerRadius, params = {}) {
+    const mat = new THREE.MeshPhysicalMaterial({
+        ...params,
+        flatShading: true
     });
 
-    planet.material = planetMat;
-    //createPlanetLayout(planet);
+    mat.userData.gradient = {
+        colorInner: new THREE.Color(innerColor),
+        colorOuter: new THREE.Color(outerColor),
+        innerRadius: innerRadius,
+        outerRadius: outerRadius
+    };
 
-    const gui = new GUI();
-    // Add a slider (Min: 0, Max: 5, Step: 0.01)
-    gui.add(settings, 'audioVolume', 0, 5, 0.01).name('Displacement Strength');
-    // Add a speed control
-    gui.add(settings, 'speed', 0, 10).name('Animation Speed');
-    // Add a toggle for wireframe (great for debugging displacement!)
-    gui.add(settings, 'wireframe').name('Show Mesh').onChange(value => {
-        planet.material.wireframe = value;
-    });
-    // Add to your GUI section in init()
-    gui.add(settings, 'count', 1, 500, 1)
-        .name('Clone Count')
-        .onFinishChange(() => {
-            refreshClones();
-    });
+    mat.onBeforeCompile = (shader) => {
+        shader.uniforms.uColorInner = { value: mat.userData.gradient.colorInner };
+        shader.uniforms.uColorOuter = { value: mat.userData.gradient.colorOuter };
+        shader.uniforms.uInnerRadius = { value: mat.userData.gradient.innerRadius };
+        shader.uniforms.uOuterRadius = { value: mat.userData.gradient.outerRadius };
 
-    // Add a color picker
-    gui.addColor(settings, 'planetColor').name('Planet Color').onChange(value => {
-        planet.material.color.set(value);
-    });
+        // 1. Pass the distance from center to the fragment shader
+        shader.vertexShader = `
+            varying float vDist;
+        ` + shader.vertexShader;
 
-    setupCloner(20);
-
-    animate();
-}
-
-function lockColors() {
-    const count = planet.geometry.attributes.position.count;
-    // Create a new array to hold the "baked" heights
-    const bakedHeights = new Float32Array(count);
-    const posAttr = planet.geometry.attributes.position;
-    const vertex = new THREE.Vector3();
-
-    for (let i = 0; i < count; i++) {
-        vertex.fromBufferAttribute(posAttr, i);
-        // Store the distance from center BEFORE any earthquakes happen
-        bakedHeights[i] = vertex.length(); 
-    }
-
-    // Add this as a new attribute to the geometry
-    planet.geometry.setAttribute('aBakedHeight', new THREE.BufferAttribute(bakedHeights, 1));
-}
-
-function bakeTerrain() {
-    const posAttr = planet.geometry.attributes.position;
-    const vertex = new THREE.Vector3();
-
-    for (let i = 0; i < posAttr.count; i++) {
-        vertex.fromBufferAttribute(posAttr, i);
-
-        // Sampling noise using the new imported function
-        // We use coordinates / scale to get smooth features
-        let noise = noise3D(vertex.x * 0.1, vertex.y * 0.1, vertex.z * 0.1) * 1.2;
-        noise += noise3D(vertex.x * 0.4, vertex.y * 0.4, vertex.z * 0.4) * 0.3;
-
-        // Apply to geometry
-        const direction = vertex.clone().normalize();
-        if (noise < 0) noise *= 0.1; // Shallow oceans
-        
-        vertex.add(direction.multiplyScalar(noise));
-        posAttr.setXYZ(i, vertex.x, vertex.y, vertex.z);
-    }
-
-    posAttr.needsUpdate = true;
-    planet.geometry.computeVertexNormals();
-
-    // Update the reference for buildings and earthquakes
-    originalPositions = planet.geometry.attributes.position.array.slice();
-}
-
-function refreshClones() {
-    // 1. Remove old buildings from the Three.js scene
-    clones.forEach(building => {
-        scene.remove(building);
-        building.geometry.dispose(); // Clean up memory
-        building.material.dispose();
-    });
-
-    // 2. Empty the arrays
-    clones.length = 0;
-    vertexIndices.length = 0;
-
-    // 3. Run the setup again with the new number
-    setupCloner(settings.count);
-}
-
-function updateDisplacer(time, audioVolume) {
-    updateRaycast(); // Find where the earthquake starts
-
-    const posAttr = planet.geometry.attributes.position;
-    const vertex = new THREE.Vector3();
-    
-    // UI Settings (Add these to your lil-gui)
-    const frequency = 2.0; 
-    const falloffRadius = 15.0; // How far the earthquake travels
-
-    for (let i = 0; i < posAttr.count; i++) {
-        // Get Original Position
-        vertex.set(
-            originalPositions[i * 3],
-            originalPositions[i * 3 + 1],
-            originalPositions[i * 3 + 2]
+        shader.vertexShader = shader.vertexShader.replace(
+            `#include <begin_vertex>`,
+            `#include <begin_vertex>
+            // Calculate distance from local origin (0,0,0)
+            vDist = length(position);` 
         );
 
-        // 1. Calculate Distance from Impact Point
-        const dist = vertex.distanceTo(impactPoint);
+        // 2. Mix colors based on that distance
+        shader.fragmentShader = `
+            uniform vec3 uColorInner;
+            uniform vec3 uColorOuter;
+            uniform float uInnerRadius;
+            uniform float uOuterRadius;
+            varying float vDist;
+        ` + shader.fragmentShader;
 
-        // 2. Calculate Falloff (Linear or Exponential)
-        // If distance is greater than falloffRadius, factor is 0
-        let falloff = Math.max(0, 1 - dist / falloffRadius);
-        falloff = Math.pow(falloff, 2); // Sharper falloff curve
+        shader.fragmentShader = shader.fragmentShader.replace(
+            `vec4 diffuseColor = vec4( diffuse, opacity );`,
+            `
+            // Map distance to a 0-1 factor
+            float factor = clamp((vDist - uInnerRadius) / (uOuterRadius - uInnerRadius), 0.0, 1.0);
+            vec3 finalColor = mix(uColorInner, uColorOuter, factor);
+            vec4 diffuseColor = vec4( finalColor, opacity );
+            `
+        );
+    };
 
-        // 3. Rayleigh Wave Simulation (Sine Wave)
-        const wave = Math.sin(dist * frequency - time * 5) * audioVolume * falloff;
+    return mat;
+}
 
-        // 4. Displace along Normal
-        const direction = vertex.clone().normalize();
-        vertex.add(direction.multiplyScalar(wave));
+// --- CONFIGURATION ---
+let scene, camera, renderer, controls, planet, ocean, mountains, sand, atmosphere, material;
 
-        posAttr.setXYZ(i, vertex.x, vertex.y, vertex.z);
+async function init() {
+    setupScene(); // Your renderer/camera setup
+    setupLights(); // Your light setup
+    setupGUI();
+
+    planet = new THREE.Mesh(
+        new THREE.IcosahedronGeometry(12, 50),
+        materials['Land']
+    );
+
+    const paramsPlanet = { 
+        scale: 0.05, 
+        octaves: 4, 
+        persistence: 0.5, 
+        lacunarity: 2.0, 
+        amplitude: 4 
     }
-    
-    posAttr.needsUpdate = true;
-    planet.geometry.computeVertexNormals();
-}
 
-function setupCloner(count) {
-    const buildingGeo = new THREE.BoxGeometry(0.2, 1, 0.2);
-    const buildingMat = new THREE.MeshStandardMaterial({ color: 0x666666 });
+    ocean = new THREE.Mesh(
+        new THREE.IcosahedronGeometry(12, 50),
+        materials['Ocean']
+    );
 
-    for (let i = 0; i < count; i++) {
-        const building = new THREE.Mesh(buildingGeo, buildingMat);
-        
-        // Pick a random vertex index from the sphere
-        const vIndex = Math.floor(Math.random() * (planet.geometry.attributes.position.count));
-        vertexIndices.push(vIndex);
-        
-        scene.add(building);
-        clones.push(building);
+    const paramsOcean = { 
+        scale: 0.05, 
+        octaves: 10, 
+        persistence: 0.5, 
+        lacunarity: 2.0, 
+        amplitude: 0.5 
     }
-}
 
-function updateClones() {
-    const planetPosAttr = planet.geometry.attributes.position;
-    const tempPos = new THREE.Vector3();
+    mountains = new THREE.Mesh(
+        new THREE.IcosahedronGeometry(12, 50),
+        materials['Mountains']
+    );
 
-    clones.forEach((building, i) => {
-        const vIndex = vertexIndices[i];
-        
-        // Get the current (displaced) position of the vertex
-        tempPos.fromBufferAttribute(planetPosAttr, vIndex);
-        
-        // Update Building Position
-        building.position.copy(tempPos);
-
-        // Update Building Rotation (keep it pointing "up" from the surface)
-        const normal = tempPos.clone().normalize();
-        building.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), normal);
-    });
-}
-
-function checkDestruction(volume) {
-    clones.forEach((building, i) => {
-        if (volume > 0.8) { // If the earthquake is too strong
-            building.userData.isBroken = true;
-        }
-
-        if (building.userData.isBroken) {
-            console.log(volume);
-            building.rotation.x += 20; // Falling over
-            building.position.y -= 0.05; // Sinking
-        }
-    });
-}
-
-function updateRaycast() {
-    // Cast a ray from the center of the camera
-    raycaster.setFromCamera(mouse, camera);
-    const intersects = raycaster.intersectObject(planet);
-
-    if (intersects.length > 0) {
-        impactPoint.copy(intersects[0].point);
+    const paramsMountains = { 
+        scale: 0.1, 
+        octaves: 7, 
+        persistence: 0.5, 
+        lacunarity: 2.0, 
+        amplitude: 6 
     }
+
+    sand = new THREE.Mesh(
+        new THREE.IcosahedronGeometry(11.2, 50),
+        materials['Sand']
+    );
+
+    const paramsSand = { 
+        scale: 0.05, 
+        octaves: 7, 
+        persistence: 0.5, 
+        lacunarity: 2.0, 
+        amplitude: 0.5 
+    }
+
+
+    //planet.material.wireframe = true;
+    atmosphere = new THREE.Mesh(
+        new THREE.IcosahedronGeometry(20, 10),
+    );
+
+    atmosphere.visible = false;
+    scene.add(atmosphere);
+
+    // Applying it to your 4 layers
+    const myLayers = [planet, ocean, mountains];
+    myLayers.forEach(layer => reduceMeshComplexity(layer, 0.6)); // Reduce by 60%
+
+    bakeTerrain(planet, paramsPlanet);
+    scene.add(planet);
+
+    bakeTerrain(ocean, paramsOcean);
+    scene.add(ocean);
+
+    bakeTerrain(mountains, paramsMountains);
+    scene.add(mountains);
+
+    bakeTerrain(sand, paramsSand);
+    scene.add(sand);
+    // ... after bakeTerrain and reduction ...
+    const originalArray = ocean.geometry.attributes.position.array;
+    ocean.geometry.userData.originalPositions = new Float32Array(originalArray);
+    const starTexture = createCircleTexture(); // No loader needed!
+    const stars = createStars(2000, 50, starTexture);
+    scene.add(stars);
+
+    // 2. Define and Load Assets
+    const natureItems = {
+        pine: 'assets/models/pine.glb',
+        tree_1: 'assets/models/tree_1.glb',
+        tree_2: 'assets/models/tree_2.glb',
+    };
+
+    const spaceItems = {
+        satellite: 'assets/models/satellite.glb',
+    };
+
+    try {
+
+        const [nature, space] = await Promise.all([
+            loadAssets(natureItems),
+            loadAssets(spaceItems),
+        ]);
+
+        //const natureClones = cloner(planet, 50, Object.values(nature), scene, 1, true, false, false);
+        const spaceClones = cloner(atmosphere, 20, Object.values(space), scene, 20, true, true, true);
+
+        //console.log(`Successfully placed ${natureClones} trees.`);
+        console.log(`Successfully placed ${spaceClones} satellite.`);
+    } catch (e) {
+        console.error("Loading failed", e);
+    }
+
+    animate(planet);
 }
 
 function animate() {
-    requestAnimationFrame(animate);
 
-    // Use speed from UI
-    const time = performance.now() * 0.001 * settings.speed; 
+    // Constant rotation on the Y-axis (Vertical axis)
+    // Adjust 0.1 to change the speed
+    const delta = clock.getDelta(); 
+    //planet.rotation.y += delta * 0.2; 
+    //planetCrust.rotation.y += delta * 0.2; 
+    const time = performance.now() * 0.001; // Get time in seconds
 
-    // if (analyzer) {
-    //     analyzer.getByteFrequencyData(dataArray);
-    //     audioVolume = dataArray[10] / 255; // Use a specific frequency bin
-    // }
-
-    // 3. THE DISPLACER: Deform the planet geometry
-    updateDisplacer(time, settings.audioVolume, originalPositions);
-
-    // 4. THE CLONER: Make buildings follow the new vertex positions
-    updateClones();
-    //checkDestruction(settings.audioVolume);
-
-    // 5. Update OrbitControls and Render
+    // Call your water animation
+    animateWater(ocean, time);
     controls.update();
     renderer.render(scene, camera);
+    requestAnimationFrame(animate);
 }
 
-// Start only after user interaction
-document.getElementById('overlay').addEventListener('click', () => {
-    document.getElementById('overlay').style.display = 'none';
-    init();
-    // Here is where you would call your initAudio() function
-});
+function setupScene() {
+    // 1. Create the Scene
+    scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x050505); // Very dark gray/black
 
-window.addEventListener('resize', () => {
-    camera.aspect = window.innerWidth / window.innerHeight;
-    camera.updateProjectionMatrix();
+    // 2. Setup Camera (Field of View, Aspect Ratio, Near, Far)
+    const aspect = window.innerWidth / window.innerHeight;
+    camera = new THREE.PerspectiveCamera(75, aspect, 0.1, 1000);
+    camera.position.z = 5; // Move camera back to see the planet
+
+    // 3. Setup Renderer
+    renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
-});
+    renderer.setPixelRatio(window.devicePixelRatio);
+    
+    // Enable shadows for depth
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+    // --- ADD ORBITCONTROLS HERE ---
+    controls = new OrbitControls(camera, renderer.domElement);
+    
+    // Optional: Add some "weight" to the movement
+    controls.enableDamping = true; 
+    controls.dampingFactor = 0.05;
+    controls.screenSpacePanning = false;
+    controls.minDistance = 3;  // Don't zoom inside the planet
+    controls.maxDistance = 100; // Don't zoom too far away
+
+    document.body.appendChild(renderer.domElement);
+
+    // Handle Window Resize
+    window.addEventListener('resize', () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+}
+
+function setupLights() {
+    // 1. Ambient Light: Softly illuminates everything
+    const ambientLight = new THREE.AmbientLight(0xffffff, 1);
+    scene.add(ambientLight);
+
+    // 2. Directional Light: Acts like the Sun
+    const sunLight = new THREE.DirectionalLight(0xffff70, 5);
+    sunLight.position.set(5, 3, 5); // Positioned to one side
+    
+    // Setup Shadows for the Sun
+    sunLight.castShadow = true;
+    sunLight.shadow.mapSize.width = 1024;
+    sunLight.shadow.mapSize.height = 1024;
+    
+    scene.add(sunLight);
+
+    // 3. Point Light (Optional): Adds a "glow" near the planet
+    const glowLight = new THREE.PointLight(0x00ff88, 0.5);
+    glowLight.position.set(-2, -2, 2);
+    scene.add(glowLight);
+}
+
+function setupGUI() {
+
+    const gui = new GUI({ title: 'Planet Settings' });
+
+    // Sliders: (object, property, min, max, step)
+    gui.add(params, 'heat', 0, 1).name('Heat / Aridity');
+
+    // Dropdown: (object, property, options array)
+    gui.add(params, 'season', ['Spring', 'Summer', 'Autumn', 'Winter']).name('Season');
+
+    gui.add(params, 'waterLevel', 0.8, 1.2).name('Ocean Level').onChange((val) => {
+        oceanMesh.scale.setScalar(val); // Resize ocean sphere instantly
+    });
+
+    gui.add(params, 'windLevel', 0, 1).name('Wind Intensity');
+
+    gui.add(params, 'earthquakeLevel', 0, 0.5).name('Tectonic Shift');
+
+    // Button to trigger a rebuild
+    gui.add(params, 'regenerate').name('Apply Changes');
+}
+
+function animateWater(oceanMesh, time) {
+    const posAttr = oceanMesh.geometry.attributes.position;
+    const original = oceanMesh.geometry.userData.originalPositions;
+    
+    const vertex = new THREE.Vector3();
+    const dir = new THREE.Vector3();
+
+    for (let i = 0; i < posAttr.count; i++) {
+        // Read the original baked position
+        vertex.set(original[i * 3], original[i * 3 + 1], original[i * 3 + 2]);
+        
+        // Direction from center (for a sphere)
+        dir.copy(vertex).normalize();
+
+        // Wave math: Adjust scale (1.5) and speed (2.0) as needed
+        const wave = Math.sin(time * 2.0 + vertex.x * 1.5 + vertex.y * 1.5) * 0.015;
+        
+        // Push the vertex out/in along its normal
+        vertex.add(dir.multiplyScalar(wave));
+
+        // Update the attribute
+        posAttr.setXYZ(i, vertex.x, vertex.y, vertex.z);
+    }
+
+    // Tell Three.js the positions changed
+    posAttr.needsUpdate = true;
+    
+    // Since it's low poly, we MUST recompute normals every frame 
+    // so the light "flat shades" the moving facets correctly
+    oceanMesh.geometry.computeVertexNormals();
+}
+
+init();
+

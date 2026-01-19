@@ -1,0 +1,23 @@
+/* Vertical Gradient */
+body {
+  height: 100vh;
+  margin: 0;
+  background: linear-gradient(to bottom, #043e94, #ecca5b);
+}
+
+const materials = {
+    Ocean: createSphericalGradientMaterial(0x0044aa, 0x0099ff, 4.5, 5.0, {
+        transmission: 0.3,
+        ior: 1.33,
+        roughness: 0.1
+    }),
+    Land: createSphericalGradientMaterial(0x4d5d12, 0x91a02e, 5.0, 5.5, {
+        roughness: 0.8
+    }),
+    Mountains: createSphericalGradientMaterial(0x606060, 0xffffff, 5.5, 7.0, {
+        roughness: 0.9
+    }),
+    Sand: createSphericalGradientMaterial(0xd2b48c, 0xfff4e0, 4.9, 5.1, {
+        roughness: 1.0
+    })
+};
