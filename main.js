@@ -271,6 +271,18 @@ function setupScene() {
 }
 
 function setupLights() {
+
+    const rgbeLoader = new RGBELoader();
+    rgbeLoader.load('/assets/HDRI_space.hdr', (texture) => {
+        texture.mapping = THREE.EquirectangularReflectionMapping;
+
+        // Use the HDRI for the background
+        scene.background = texture;
+
+        // Use the HDRI for realistic lighting/reflections on materials
+        scene.environment = texture;
+    });
+
     // 1. Ambient Light: Softly illuminates everything
     const ambientLight = new THREE.AmbientLight(0xffffff, 1);
     scene.add(ambientLight);
